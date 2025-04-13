@@ -1,4 +1,4 @@
-
+/*
 //
 // Client.cpp
 // ~~~~~~~~~~
@@ -34,7 +34,7 @@ int main()
 {
     #if defined (_WIN32)
         setlocale(LC_ALL, "Russian");
-        system("chcp 1251");
+        std::system("chcp 1251");
     #endif
 
     try
@@ -62,3 +62,4 @@ int main()
 
     return 0;
 }
+*/

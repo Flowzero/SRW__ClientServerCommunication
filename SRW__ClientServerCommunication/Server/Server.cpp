@@ -1,182 +1,105 @@
 
-// 
+//
 // Server.cpp
 // ~~~~~~~~~~
 // 
-// This is an asynchronous server capable of handling multiple connections.
-// The current assumption is that the server and clients are running on the same machine.
-// 
-// Known issues: no client disconnect handler.
-// 
+// These are methods for base class (Server)
 // 
 // Copyright (c) 2025 Flowzy 
 // This project uses the Boost C++ Libraries (https://www.boost.org/).  
 // Boost is distributed under the Boost Software License, Version 1.0.  
 // A copy of the license is available at: https://www.boost.org/LICENSE_1_0.txt
-// 
+//
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
 #include <boost/system.hpp>
 
-#include <boost/program_options.hpp>
-
-#include <iostream>
-#include <string>
-#include <set>
-
+#include "Server.h"
 #include "ServerClient.h"
-
-#if defined (_WIN32)
-	#include <Windows.h>
-#endif
 
 
 using namespace std;
-using namespace boost;
+using namespace boost::asio;
 
-using boost::asio::ip::udp;
 using boost::asio::co_spawn;
-using boost::asio::detached;
 using boost::asio::awaitable;
 using boost::asio::use_awaitable;
 
-namespace opt = boost::program_options;
-
-
-// create other server classes for specific platforms
-
-
-class UDPServer
+Server::Server(asio::io_context& io_con, unsigned short port)
+	: sock(io_con, udp::endpoint(udp::v4(), port)), server_running(true)
 {
-    private:
-        udp::socket sock;
-        set<client_ptr> clients;
-        udp::endpoint remote_endpoint;
+	// do noting 
+}
 
-        boost::array<char, 1> recv_buffer;
-        bool server_running;
-
-
-        awaitable<void> start() {
-            while (server_running)
-            {
-                try
-                {
-                    asio::steady_timer timer(co_await asio::this_coro::executor);
-
-                    cout << "Server is running" << endl;
-
-                #if defined (_WIN32)
-                    if (clients.size())
-                    {
-                        POINT cursorPos;
-                        if (GetCursorPos(&cursorPos))
-                        {
-                            string message = to_string(cursorPos.x) + " " +
-                                             to_string(cursorPos.y);
-
-                            for (auto client : clients)
-                            {
-                                co_await sock.async_send_to(
-                                    asio::buffer(message), client->get_endpoint(),
-                                    use_awaitable
-                                );
-                            }
-                            cout << "Sent cursor data: " << message << endl;
-                        }
-                    }
-                    timer.expires_after(chrono::milliseconds(100));
-                    co_await timer.async_wait(use_awaitable);
-                #endif
-                }
-
-                catch (boost::system::error_code& ec)
-                {
-                    cerr << "Error in the start()";
-                }
-            }
-        }
-
-        awaitable<void> recieve_connections() {
-            while (server_running)
-            {
-                try
-                {
-                    asio::steady_timer timer(co_await asio::this_coro::executor);
-
-                    size_t bytes_recievd = co_await sock.async_receive_from(
-                        asio::buffer(recv_buffer), remote_endpoint, use_awaitable
-                    );
-
-                    bool client_exists = false;
-                    for (const auto& client : clients) {
-                        if (client->get_endpoint() == remote_endpoint) {
-                            client_exists = true;
-                            break;
-                        }
-                    }
-
-                    if (!client_exists)
-                    {
-                        auto new_client = make_shared<WINDOWS_client>(remote_endpoint);
-                        // add condition to create obj of a platform-orientated class
-
-                        clients.insert(new_client);
-                        cout << "New client connected: "
-                            << remote_endpoint.address().to_string()
-                            << remote_endpoint.port() << endl;
-
-                    }
-                    timer.expires_after(chrono::milliseconds(100));
-                    co_await timer.async_wait(use_awaitable);
-                }
-                catch (system::system_error& err)
-                {
-                    if (err.code() != boost::asio::error::operation_aborted)
-                        cerr << "Receive error: " << err.what() << endl;
-                }
-            }
-        }
-
-    public:
-        UDPServer(asio::io_context& io_context, unsigned short port)
-            : sock(io_context, udp::endpoint(udp::v4(), port)), server_running(true) {
-            co_spawn(io_context, start(), detached);
-            co_spawn(io_context, recieve_connections(), detached);
-        }
-        ~UDPServer() {
-            server_running = false;
-            sock.close();
-        }
-
-        bool is_running() const { return server_running; }
-};
-
-
-int main(int argc, char* argv[])
+Server::~Server()
 {
-    opt::options_description desc("All options");
-    desc.add_options()
-        ("port_number", opt::value<unsigned short>()->default_value(3333), "Specify port number you want to run server on")
-        ("IPv4_6", opt::value<string>(), "Specify IP version (IPv4 or IPv6)")
-        ("help", "produce help message")
-        ;
-    opt::variables_map vm;
-    opt::store(opt::parse_command_line(argc, argv, desc), vm);
-    opt::notify(vm);
+	server_running = false;
+	sock.close();
+}
 
-    if (vm.count("help")) {
-        cout << desc << endl;
-        return 1;
-    }
+bool
+Server::is_running() const
+{
+	return server_running;
+}
 
+awaitable<void>
+Server::receive_connections()
+{
+	while (server_running)
+	{
+		try
+		{
+			asio::steady_timer timer(co_await asio::this_coro::executor);
+			size_t bytes_recievd = co_await sock.async_receive_from(
+				asio::buffer(recv_conn_buff),
+				remote_endpoint,
+				use_awaitable
+			);
 
-    unsigned short port_number = vm["port_number"].as<unsigned short>();
-    asio::io_context io_context;
+			bool client_exists = false;
+			for (const auto& client : clients)
+			{
+				if (client->get_endpoint() == remote_endpoint)
+				{
+					client_exists = true;
+					break;
+				}
+			}
 
-    UDPServer server(io_context, port_number);
-    io_context.run();
+			if (!client_exists)
+			{
+				/*
+				// determinate client's platform
+				string client_platform = [this] {
+					return "WINDOWS";
+					}();
 
-    return 0;
+				client_ptr new_client;
+				if (client_platform == "WINDOWS") {
+					auto new_client = make_shared<WINDOWS_client>(remote_endpoint);
+				}
+				else if (client_platform == "LINUX") {
+					auto new_client = make_shared<LINUX_client>(remote_endpoint);
+				}
+				*/
+				auto new_client = make_shared< WINDOWS_client>(remote_endpoint);
+				 
+				clients.insert(new_client);
+				cout << "New client connected: "
+					<< remote_endpoint.address().to_string()
+					<< remote_endpoint.port() << endl;
+			}
+			timer.expires_after(std::chrono::milliseconds(100));
+			co_await timer.async_wait(use_awaitable);
+		}
+		catch (boost::system::system_error& err)
+		{
+			if (err.code() != boost::asio::error::operation_aborted)
+			{
+				cerr << "Receive error: " << err.what() << endl;
+			}
+		}
+	}
 }
